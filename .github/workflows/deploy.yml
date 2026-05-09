@@ -76,7 +76,12 @@ jobs:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
           SHORT_SHA="${GITHUB_SHA:0:7}"
-          docker build -t "$REGISTRY/$ECR_REPOSITORY:$SHORT_SHA" -t "$REGISTRY/$ECR_REPOSITORY:latest" .
+          docker build \
+            --build-arg APP_VERSION="$SHORT_SHA" \
+            --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t "$REGISTRY/$ECR_REPOSITORY:$SHORT_SHA" \
+            -t "$REGISTRY/$ECR_REPOSITORY:latest" \
+            .
           docker push "$REGISTRY/$ECR_REPOSITORY:$SHORT_SHA"
           docker push "$REGISTRY/$ECR_REPOSITORY:latest"
 

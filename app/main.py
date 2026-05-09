@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 
 from fastapi import FastAPI, Request
@@ -41,3 +42,11 @@ async def log_requests(request: Request, call_next):
 @app.get("/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/version")
+def version() -> dict[str, str]:
+    return {
+        "version": os.getenv("APP_VERSION", "unknown"),
+        "deployed_at": os.getenv("BUILD_TIME", "unknown"),
+    }

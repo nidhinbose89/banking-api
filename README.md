@@ -33,6 +33,7 @@ HTTPS uses a self-signed certificate (no domain). Use `curl -k` or browser overr
 | POST | `/accounts/{id}/deposit` | Deposit funds (requires `Idempotency-Key` header) |
 | POST | `/accounts/{id}/withdraw` | Withdraw funds (requires `Idempotency-Key` header) |
 | GET | `/health` | Liveness check |
+| GET | `/version` | Returns deployed commit SHA and build timestamp |
 
 Full OpenAPI docs at `/docs` on the live URL.
 
