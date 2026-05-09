@@ -37,3 +37,8 @@ output "github_actions_role_arn" {
   description = "IAM role ARN assumed by GitHub Actions via OIDC for deploy"
   value       = aws_iam_role.github_actions.arn
 }
+
+output "cloudwatch_dashboard_url" {
+  description = "CloudWatch dashboard URL"
+  value       = "https://ap-southeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-southeast-1#dashboards:name=${aws_cloudwatch_dashboard.main.dashboard_name}"
+}
