@@ -32,3 +32,8 @@ output "secret_arn" {
   description = "ARN of the database secret in Secrets Manager"
   value       = aws_secretsmanager_secret.db.arn
 }
+
+output "github_actions_role_arn" {
+  description = "IAM role ARN assumed by GitHub Actions via OIDC for deploy"
+  value       = aws_iam_role.github_actions.arn
+}
