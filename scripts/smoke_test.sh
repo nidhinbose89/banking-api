@@ -193,6 +193,10 @@ if [[ "${code}" != "422" ]]; then
   echo "Actual HTTP ${code} body: ${body}" >&2
   fail "[9/${TOTAL}] Insufficient funds ... FAIL"
 fi
+if [[ -z "${body}" ]]; then
+  echo "Actual HTTP 422 body: (empty)" >&2
+  fail "[9/${TOTAL}] Insufficient funds ... FAIL"
+fi
 if ! echo "${body}" | grep -q 'Insufficient funds'; then
   echo "Expected Insufficient funds in body: ${body}" >&2
   fail "[9/${TOTAL}] Insufficient funds ... FAIL"

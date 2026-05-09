@@ -22,12 +22,6 @@ public class TrustAllCertsPolicy : ICertificatePolicy {
     $script:SkipCertCheck = @{}
 }
 
-if ($PSVersionTable.PSVersion.Major -ge 6) {
-    $script:SmokeSkipHttpError = @{ SkipHttpErrorCheck = $true }
-} else {
-    $script:SmokeSkipHttpError = @{}
-}
-
 $ErrorActionPreference = "Stop"
 $Total = 10
 $BaseUrl = $BaseUrl.TrimEnd("/")
@@ -72,45 +66,66 @@ function Invoke-SmokeRequest {
         $params.ContentType = "application/json"
         $params.Body = $Body
     }
-    if ($PSVersionTable.PSVersion.Major -ge 6) {
-        $params.TimeoutSec = 30
-        $web = Invoke-WebRequest @params @script:SkipCertCheck @script:SmokeSkipHttpError
-        return Complete-SmokeWebResponse $web
-    }
-
     try {
+        if ($PSVersionTable.PSVersion.Major -ge 6) {
+            $params.TimeoutSec = 30
+        }
         $web = Invoke-WebRequest @params @script:SkipCertCheck
         return Complete-SmokeWebResponse $web
     } catch {
-        $ex = $_.Exception
-        while ($null -ne $ex -and $ex -isnot [System.Net.WebException]) {
+        $err = $_
+        $ex = $err.Exception
+        $resp = $null
+        while ($null -ne $ex) {
+            $prop = $ex.PSObject.Properties["Response"]
+            if ($null -ne $prop -and $null -ne $prop.Value) {
+                $resp = $prop.Value
+                break
+            }
             $ex = $ex.InnerException
         }
-        if ($ex -isnot [System.Net.WebException]) {
+        if ($null -eq $resp) {
             throw
         }
-        $resp = $ex.Response
-        if ($null -eq $resp) { throw }
-        $code = [int]$resp.StatusCode
+
+        $code = 0
         $content = ""
+        # Avoid [System.Net.Http.HttpResponseMessage]: not loaded by default on Windows PowerShell 5.1.
+        $isHttpResponseMessage = ($resp.GetType().FullName -eq "System.Net.Http.HttpResponseMessage")
         try {
-            $s = $resp.GetResponseStream()
-            if ($null -ne $s) {
-                $ms = New-Object System.IO.MemoryStream
+            if ($isHttpResponseMessage) {
+                $code = [int]$resp.StatusCode
+                $content = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            } else {
+                # Windows PowerShell 5.1: HttpWebResponse from WebException
+                $code = [int]$resp.StatusCode
                 try {
-                    $s.CopyTo($ms)
-                    $content = [System.Text.Encoding]::UTF8.GetString($ms.ToArray())
+                    $s = $resp.GetResponseStream()
+                    if ($null -ne $s) {
+                        $reader = New-Object System.IO.StreamReader($s, [System.Text.Encoding]::UTF8)
+                        try {
+                            $content = $reader.ReadToEnd()
+                        } finally {
+                            $reader.Dispose()
+                        }
+                    }
                 } finally {
-                    $ms.Dispose()
-                    $s.Dispose()
+                    $resp.Dispose()
                 }
             }
         } finally {
-            $resp.Dispose()
+            if ($isHttpResponseMessage) {
+                $resp.Dispose()
+            }
         }
+
+        if ([string]::IsNullOrWhiteSpace($content) -and $null -ne $err.ErrorDetails -and -not [string]::IsNullOrWhiteSpace($err.ErrorDetails.Message)) {
+            $content = [string]$err.ErrorDetails.Message
+        }
+
         return [pscustomobject]@{
             StatusCode = $code
-            Content    = $content
+            Content    = [string]$content
         }
     }
 }
@@ -272,30 +287,31 @@ if ($r.StatusCode -ne 422) {
     Write-Error "[9/$Total] Insufficient funds ... FAIL"
     exit 1
 }
-if ([string]::IsNullOrWhiteSpace($r.Content) -or ($r.Content -match "Insufficient funds")) {
-    Write-Host "[9/$Total] Insufficient funds ... PASS"
-} else {
-    try {
-        $err = $r.Content | ConvertFrom-Json
-    } catch {
-        Write-Host "Actual HTTP 422 body: $($r.Content)"
-        Write-Error "[9/$Total] Insufficient funds ... FAIL"
-        exit 1
-    }
-    $detail = $err.detail
-    $ok = ($detail -eq "Insufficient funds")
-    if (-not $ok -and ($detail -is [System.Array])) {
-        foreach ($item in $detail) {
-            if ("$item" -eq "Insufficient funds") { $ok = $true; break }
-        }
-    }
-    if (-not $ok) {
-        Write-Host "Actual HTTP 422 body: $($r.Content)"
-        Write-Error "[9/$Total] Insufficient funds ... FAIL (expected detail 'Insufficient funds', got: $detail)"
-        exit 1
-    }
-    Write-Host "[9/$Total] Insufficient funds ... PASS"
+if ([string]::IsNullOrWhiteSpace($r.Content)) {
+    Write-Host "Actual HTTP 422 body: (empty)"
+    Write-Error "[9/$Total] Insufficient funds ... FAIL"
+    exit 1
 }
+try {
+    $err = $r.Content | ConvertFrom-Json
+} catch {
+    Write-Host "Actual HTTP 422 body: $($r.Content)"
+    Write-Error "[9/$Total] Insufficient funds ... FAIL"
+    exit 1
+}
+$detail = $err.detail
+$ok = ($detail -eq "Insufficient funds")
+if (-not $ok -and ($detail -is [System.Array])) {
+    foreach ($item in $detail) {
+        if ("$item" -eq "Insufficient funds") { $ok = $true; break }
+    }
+}
+if (-not $ok) {
+    Write-Host "Actual HTTP 422 body: $($r.Content)"
+    Write-Error "[9/$Total] Insufficient funds ... FAIL (expected detail 'Insufficient funds', got: $detail)"
+    exit 1
+}
+Write-Host "[9/$Total] Insufficient funds ... PASS"
 
 # --- [10/10] Final balance ---
 $r = Invoke-SmokeRequest -Method GET -Path "/accounts/$accountId/balance"
