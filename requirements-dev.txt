@@ -1,1 +1,2 @@
+-r requirements-test.txt
 diagrams==0.23.4
