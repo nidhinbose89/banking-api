@@ -70,6 +70,25 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres pytest
 
 In CI, GitHub Actions provides a throwaway Postgres service container.
 
+## Smoke Test
+
+After deployment, run the smoke test against the live API (uses `curl -k` / certificate skip for the self-signed ALB cert):
+
+```bash
+chmod +x scripts/smoke_test.sh
+./scripts/smoke_test.sh
+```
+
+Or on Windows (Windows PowerShell 5.1 or PowerShell 7+):
+
+```powershell
+.\scripts\smoke_test.ps1
+```
+
+Optional first argument is the API base URL; it defaults to the live ALB URL in the scripts.
+
+The Bash script uses `jq` if installed for JSON replay checks; install `jq` for the most reliable output (`apt install jq`, `brew install jq`, etc.). The PowerShell script uses `Invoke-WebRequest` (with certificate skip appropriate to the PowerShell version). The script exercises all endpoints, including idempotency edge cases. Exits non-zero on any failure.
+
 ## Deployment
 
 Pushes to `main` trigger `.github/workflows/deploy.yml`:
@@ -126,6 +145,7 @@ These are choices I'd revisit in a production environment with more time:
 - **Integration tests only.** The current tests hit a real Postgres database. In production I would split into unit tests (mocked dependencies, run on every commit) and integration tests (real DB, run in CI). Skipped for time.
 - **Shared `DATABASE_URL` for app and tests.** Both read the same environment variable. The test fixture explicitly switches to a `banking_test` database to avoid touching production data, but a separate `TEST_DATABASE_URL` would make this safer.
 - **Single environment.** No staging/production split. A real setup would have separate AWS accounts or at least separate Terraform workspaces with promotion between them.
+- **Smoke test writes to the live database.** Each run creates a real account and transactions in production RDS. Production would use a dedicated synthetic test account, run smoke tests against staging only, or auto-clean up after each run.
 - **No application performance monitoring.** CloudWatch covers infrastructure metrics. AWS X-Ray or DataDog would give per-request tracing.
 - **No image vulnerability scanning beyond ECR scan-on-push.** Adding Trivy or Snyk in the CI pipeline would catch issues before push.
 - **No deploy approval gate.** Pushes to main deploy automatically. Production would gate behind GitHub Environments approval or a manual promotion step.
@@ -141,6 +161,7 @@ These are choices I'd revisit in a production environment with more time:
 ├── infra/                  # Terraform IaC
 ├── docs/                   # Architecture diagram (source + PNG)
 ├── .github/workflows/      # CI/CD pipeline
+├── scripts/                # Smoke tests (bash + PowerShell)
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
