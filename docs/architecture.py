@@ -2,7 +2,6 @@
 from diagrams import Cluster, Diagram, Edge
 from diagrams.aws.compute import ECS, ECR, Fargate
 from diagrams.aws.database import RDS
-from diagrams.aws.devtools import Codebuild
 from diagrams.aws.management import Cloudwatch
 from diagrams.aws.network import ALB, InternetGateway, NATGateway
 from diagrams.aws.security import SecretsManager
@@ -14,12 +13,12 @@ with Diagram(
     outformat="png",
     show=False,
 ):
-    internet = InternetGateway("Internet")
+    users = InternetGateway("Users (Internet)")
+    external = InternetGateway("External Services")
     github = Github("GitHub Actions")
     ecr = ECR("ECR")
     cloudwatch = Cloudwatch("CloudWatch Logs")
     secrets = SecretsManager("Secrets Manager")
-    ecr_placeholder = Codebuild("CI/CD Build")
 
     with Cluster("VPC"):
         with Cluster("Public Subnets (AZ-a, AZ-b)"):
@@ -33,13 +32,12 @@ with Diagram(
 
             ecs_service >> tasks
 
-    internet >> Edge(label="HTTPS:443") >> alb
+    users >> Edge(label="HTTPS:443") >> alb
     alb >> Edge(label="HTTP:8000") >> tasks
     tasks >> Edge(label="5432") >> rds
     tasks >> Edge(label="fetch DB creds") >> secrets
     tasks >> Edge(label="logs") >> cloudwatch
-    tasks >> nat >> internet
+    tasks >> nat >> external
 
     github >> Edge(label="docker push") >> ecr
     github >> Edge(label="force-new-deployment") >> ecs_service
-    github >> ecr_placeholder
