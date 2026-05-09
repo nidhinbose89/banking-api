@@ -75,7 +75,11 @@ When done, note the outputs:
 
 GitHub Actions authenticates to AWS via OpenID Connect (OIDC), so no AWS keys are stored as secrets. The Terraform apply already created the IAM role and trust policy.
 
-If forking this repo, update the IAM role's trust policy in `infra/iam_github_actions.tf` to reference your fork's path (`repo:YOUR_USERNAME/YOUR_REPO:ref:refs/heads/main`), then re-apply Terraform.
+If forking this repo into your own AWS account:
+
+1. Update the IAM role's trust policy in `infra/iam_github_actions.tf` to reference your fork (`repo:YOUR_USERNAME/YOUR_REPO:ref:refs/heads/main`).
+2. Update the `role-to-assume` ARN in `.github/workflows/deploy.yml` to your account's role ARN (output as `github_actions_role_arn` from `terraform apply`).
+3. Re-apply Terraform.
 
 ### Step 4: First Deployment (manual, before CI/CD takes over)
 
