@@ -1,6 +1,9 @@
 resource "aws_ecr_repository" "app" {
   name                 = var.project_name
   image_tag_mutability = "MUTABLE"
+  # Take-home convenience: allow `terraform destroy` to delete a non-empty repo.
+  # In production, omit force_delete so destroy cannot wipe images by mistake.
+  force_delete = true
 
   image_scanning_configuration {
     scan_on_push = true
