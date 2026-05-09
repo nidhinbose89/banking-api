@@ -71,15 +71,16 @@ When done, note the outputs:
 - `ecr_repository_url` — where the Docker image will be pushed
 - `github_actions_role_arn` — for CI/CD setup (next step)
 
-### Step 3: Configure GitHub Actions Secrets
+### Step 3: Configure GitHub Actions for AWS
 
 GitHub Actions authenticates to AWS via OpenID Connect (OIDC), so no AWS keys are stored as secrets. The Terraform apply already created the IAM role and trust policy.
 
+The deploy workflow reads the IAM role ARN from a GitHub Actions variable (`AWS_DEPLOY_ROLE_ARN`), so the workflow file works for any AWS account without code changes.
+
 If forking this repo into your own AWS account:
 
-1. Update the IAM role's trust policy in `infra/iam_github_actions.tf` to reference your fork (`repo:YOUR_USERNAME/YOUR_REPO:ref:refs/heads/main`).
-2. Update the `role-to-assume` ARN in `.github/workflows/deploy.yml` to your account's role ARN (output as `github_actions_role_arn` from `terraform apply`).
-3. Re-apply Terraform.
+1. Update the IAM role's trust policy in `infra/iam_github_actions.tf` to reference your fork (`repo:YOUR_USERNAME/YOUR_REPO:ref:refs/heads/main`), then re-apply Terraform.
+2. In your fork's GitHub repo: **Settings → Secrets and variables → Actions → Variables tab → New repository variable**. Name it `AWS_DEPLOY_ROLE_ARN`, value is the `github_actions_role_arn` output from `terraform apply`.
 
 ### Step 4: First Deployment (manual, before CI/CD takes over)
 
