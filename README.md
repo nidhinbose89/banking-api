@@ -145,6 +145,7 @@ These are choices I'd revisit in a production environment with more time:
 - **Integration tests only.** The current tests hit a real Postgres database. In production I would split into unit tests (mocked dependencies, run on every commit) and integration tests (real DB, run in CI). Skipped for time.
 - **Shared `DATABASE_URL` for app and tests.** Both read the same environment variable. The test fixture explicitly switches to a `banking_test` database to avoid touching production data, but a separate `TEST_DATABASE_URL` would make this safer.
 - **Single environment.** No staging/production split. A real setup would have separate AWS accounts or at least separate Terraform workspaces with promotion between them.
+- **Smoke test writes to the live database.** Each run creates a real account and transactions in production RDS. Production would use a dedicated synthetic test account, run smoke tests against staging only, or auto-clean up after each run.
 - **No application performance monitoring.** CloudWatch covers infrastructure metrics. AWS X-Ray or DataDog would give per-request tracing.
 - **No image vulnerability scanning beyond ECR scan-on-push.** Adding Trivy or Snyk in the CI pipeline would catch issues before push.
 - **No deploy approval gate.** Pushes to main deploy automatically. Production would gate behind GitHub Environments approval or a manual promotion step.
