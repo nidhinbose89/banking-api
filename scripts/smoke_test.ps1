@@ -9,13 +9,16 @@ param(
 if ($PSVersionTable.PSVersion.Major -ge 6) {
     $script:SkipCertCheck = @{ SkipCertificateCheck = $true }
 } else {
-    Add-Type @"
+    # Same session may run this script more than once; Add-Type fails if the type already exists.
+    if (-not ("TrustAllCertsPolicy" -as [type])) {
+        Add-Type @"
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
 public class TrustAllCertsPolicy : ICertificatePolicy {
     public bool CheckValidationResult(ServicePoint sp, X509Certificate cert, WebRequest req, int problem) { return true; }
 }
 "@
+    }
     [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
     [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
     [System.Net.ServicePointManager]::CheckCertificateRevocationList = $false
