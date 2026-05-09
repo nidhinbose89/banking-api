@@ -70,6 +70,25 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres pytest
 
 In CI, GitHub Actions provides a throwaway Postgres service container.
 
+## Smoke Test
+
+After deployment, run the smoke test against the live API (uses `curl -k` / certificate skip for the self-signed ALB cert):
+
+```bash
+chmod +x scripts/smoke_test.sh
+./scripts/smoke_test.sh
+```
+
+Or on Windows (Windows PowerShell 5.1 or PowerShell 7+):
+
+```powershell
+.\scripts\smoke_test.ps1
+```
+
+Optional first argument is the API base URL; it defaults to the live ALB URL in the scripts.
+
+The Bash script uses `jq` if installed for JSON replay checks; install `jq` for the most reliable output (`apt install jq`, `brew install jq`, etc.). The PowerShell script uses `Invoke-WebRequest` (with certificate skip appropriate to the PowerShell version). The script exercises all endpoints, including idempotency edge cases. Exits non-zero on any failure.
+
 ## Deployment
 
 Pushes to `main` trigger `.github/workflows/deploy.yml`:
@@ -141,6 +160,7 @@ These are choices I'd revisit in a production environment with more time:
 ├── infra/                  # Terraform IaC
 ├── docs/                   # Architecture diagram (source + PNG)
 ├── .github/workflows/      # CI/CD pipeline
+├── scripts/                # Smoke tests (bash + PowerShell)
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
