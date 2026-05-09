@@ -52,11 +52,18 @@ docker compose up --build
 
 App available at `http://localhost:8000`. Swagger UI at `http://localhost:8000/docs`.
 
+For a full local Python environment (runtime, tests, and diagram tooling):
+
+```bash
+pip install -r requirements-dev.txt
+```
+
 ## Running Tests
 
 Tests are integration tests against a real Postgres (see Trade-offs).
 
 ```bash
+pip install -r requirements-test.txt
 docker compose up -d db
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres pytest
 ```
@@ -137,6 +144,7 @@ These are choices I'd revisit in a production environment with more time:
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
+├── requirements-test.txt
 ├── requirements-dev.txt
 └── README.md
 ```
