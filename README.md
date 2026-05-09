@@ -24,6 +24,112 @@ https://banking-api-alb-1168095763.ap-southeast-1.elb.amazonaws.com
 
 HTTPS uses a self-signed certificate (no domain). Use `curl -k` or browser override.
 
+## Setup Guide
+
+This is a step-by-step walkthrough from fresh clone to deployed application. Existing infrastructure is already deployed; these steps document how to recreate it from scratch.
+
+### Prerequisites
+
+Install on your local machine:
+
+- **AWS CLI v2** — https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+- **Terraform 1.6+** — https://developer.hashicorp.com/terraform/install
+- **Docker Desktop** (Windows/Mac) or Docker Engine (Linux)
+- **Python 3.11+**
+- **Git**
+
+### AWS Account Setup
+
+1. Create or use an existing AWS account.
+2. Create an IAM user (or use an existing one) with **AdministratorAccess** for the initial Terraform apply. After deployment you can scope this down — see Trade-offs.
+3. Generate an access key for that user, then run:
+```bash
+   aws configure
+```
+   Enter the access key, secret, region `ap-southeast-1`, and output format `json`.
+
+### Step 1: Clone the Repository
+
+```bash
+git clone https://github.com/nidhinbose89/banking-api.git
+cd banking-api
+```
+
+### Step 2: Deploy Infrastructure
+
+```bash
+cd infra
+terraform init
+terraform apply
+```
+
+Review the plan and type `yes` when prompted. Takes ~10 minutes (RDS is the slowest).
+
+When done, note the outputs:
+
+- `alb_url` — the live application endpoint
+- `ecr_repository_url` — where the Docker image will be pushed
+- `github_actions_role_arn` — for CI/CD setup (next step)
+
+### Step 3: Configure GitHub Actions Secrets
+
+GitHub Actions authenticates to AWS via OpenID Connect (OIDC), so no AWS keys are stored as secrets. The Terraform apply already created the IAM role and trust policy.
+
+If forking this repo, update the IAM role's trust policy in `infra/iam_github_actions.tf` to reference your fork's path (`repo:YOUR_USERNAME/YOUR_REPO:ref:refs/heads/main`), then re-apply Terraform.
+
+### Step 4: First Deployment (manual, before CI/CD takes over)
+
+The first Docker image needs to be pushed manually so ECS has something to run.
+
+```bash
+# From repo root
+aws ecr get-login-password --region ap-southeast-1 | \
+  docker login --username AWS --password-stdin $(terraform -chdir=infra output -raw ecr_repository_url)
+
+docker build -t banking-api:latest .
+docker tag banking-api:latest $(terraform -chdir=infra output -raw ecr_repository_url):latest
+docker push $(terraform -chdir=infra output -raw ecr_repository_url):latest
+
+aws ecs update-service \
+  --cluster banking-api-cluster \
+  --service banking-api-service \
+  --force-new-deployment \
+  --region ap-southeast-1
+```
+
+Wait ~3 minutes for ECS to pull the image and start tasks.
+
+### Step 5: Verify Deployment
+
+```bash
+curl -k $(terraform -chdir=infra output -raw alb_url)/health
+```
+
+Expected: `{"status":"ok"}`
+
+Or run the full smoke test (see Smoke Test section below).
+
+### Step 6: Subsequent Deployments via CI/CD
+
+After Step 4, every push to the `main` branch automatically:
+
+1. Runs pytest in a Postgres service container
+2. Builds a new Docker image, tags with commit SHA + `latest`
+3. Pushes to ECR
+4. Forces ECS to deploy the new image
+5. Waits for the service to stabilize
+
+Pull requests run only the test job.
+
+### Tearing Down
+
+```bash
+cd infra
+terraform destroy
+```
+
+This removes all AWS resources created by Terraform. ECR images and CloudWatch log retention are also deleted.
+
 ## API Endpoints
 
 | Method | Path | Description |
@@ -91,51 +197,65 @@ The Bash script uses `jq` if installed for JSON replay checks; install `jq` for 
 
 ## Deployment
 
-Pushes to `main` trigger `.github/workflows/deploy.yml`:
+Continuous deployment via GitHub Actions. Full setup steps in [Setup Guide](#setup-guide). Summary:
 
-1. **Test job:** runs pytest against a Postgres service container.
-2. **Deploy job:** assumes an AWS IAM role via OIDC (no long-lived keys), builds the Docker image, tags it with the git commit SHA and `latest`, pushes to ECR, forces a new ECS deployment, and waits for the service to stabilize.
+- **Test job:** runs pytest against a Postgres service container (also on PRs).
+- **Deploy job:** assumes an AWS IAM role via OpenID Connect (no long-lived keys), builds the Docker image, tags with commit SHA and `latest`, pushes to ECR, forces ECS deployment, waits for service to stabilize.
 
-Pull requests run only the test job.
-
-### Authentication
-
-GitHub Actions authenticates to AWS using OpenID Connect (OIDC). The IAM role's trust policy is scoped to this specific repository and the `main` branch. No AWS access keys are stored in GitHub Secrets.
-
-### Image Tagging
-
-Every image is pushed with two tags:
-- The 7-character git commit SHA (e.g. `a3f9c21`) for traceability.
-- `latest` for the ECS task definition reference.
-
-This allows rollback by retagging an older SHA as `latest`.
+Image tagging: every image is pushed with the 7-character git commit SHA (e.g. `a3f9c21`) for traceability and `latest` for ECS task definition reference. Rollback is done by retagging an older SHA as `latest`.
 
 ## Infrastructure
 
-All infrastructure is defined in `infra/` as Terraform. Resources include:
+All AWS resources are defined in `infra/` as Terraform. Resources include:
 
 - VPC with public and private subnets across 2 Availability Zones
 - Application Load Balancer (HTTPS:443 with self-signed cert, HTTP:80 redirects)
-- ECS cluster, task definition (0.25 vCPU, 512 MB), and service (2 tasks)
+- ECS cluster, task definition (0.25 vCPU, 512 MB), service (2 tasks)
 - RDS PostgreSQL 15 (db.t3.micro, single-AZ)
 - ECR repository with scan-on-push and lifecycle policy (keep last 10 images)
 - Secrets Manager for the database connection string
 - CloudWatch log group, dashboard, and 5xx error alarm
-- IAM OIDC provider and role for GitHub Actions
+- IAM OpenID Connect provider and role for GitHub Actions
 
-To deploy:
-
-```bash
-cd infra
-terraform init
-terraform apply
-```
+Setup commands are in the [Setup Guide](#setup-guide).
 
 ## Monitoring
 
 - **Logs:** CloudWatch log group `/ecs/banking-api`, streamed from all containers.
 - **Dashboard:** https://ap-southeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-southeast-1#dashboards:name=banking-api-dashboard (4 widgets: ALB request count, ALB 5xx errors, ECS CPU, ECS memory)
 - **Alarm:** `banking-api-alb-5xx-errors` triggers when 5xx target errors exceed 5 in 5 minutes.
+
+## Security
+
+### Network Isolation
+- VPC with public and private subnets across 2 Availability Zones.
+- ALB in public subnets, ECS tasks and RDS in private subnets.
+- NAT Gateway for outbound-only egress from private subnets.
+- Security groups enforce least-privilege flow:
+  - ALB accepts 443/80 from the internet only.
+  - ECS tasks accept 8000 from the ALB security group only.
+  - RDS accepts 5432 from the ECS security group only.
+
+### Encryption
+- **In transit:** HTTPS:443 at the ALB, HTTP:80 redirects to HTTPS. Self-signed certificate (no domain).
+- **At rest:** RDS storage encrypted (AWS-managed KMS key). Secrets Manager values encrypted by default.
+
+### Access Control
+- IAM roles follow least-privilege:
+  - ECS task execution role: pull from ECR, write to CloudWatch, read the specific DB secret only.
+  - ECS task role: minimal application-level permissions.
+  - GitHub Actions role: ECR push, ECS update-service, PassRole on the task execution role only.
+- GitHub Actions authenticates via OpenID Connect. No long-lived AWS access keys are stored as GitHub Secrets.
+- The OIDC trust policy is scoped to this specific repository and the `main` branch.
+
+### Secrets Management
+- Database credentials are generated by Terraform and stored in AWS Secrets Manager.
+- ECS injects the connection string into the container at startup. Credentials never appear in source code, environment files, or CloudWatch logs.
+
+### Application-Level Safeguards
+- `Idempotency-Key` header on deposit and withdraw prevents duplicate transactions on client retries.
+- Pydantic schema validation rejects malformed input before reaching business logic.
+- `SELECT FOR UPDATE` row locking on balance reads prevents race conditions on concurrent withdrawals.
 
 ## Trade-offs and Design Decisions
 
