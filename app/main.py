@@ -15,6 +15,17 @@ app = FastAPI()
 app.include_router(accounts.router)
 
 
+@app.get("/")
+def root() -> dict[str, str]:
+    return {
+        "name": "Banking API",
+        "description": "REST API for basic banking operations",
+        "docs": "/docs",
+        "health": "/health",
+        "version": "/version",
+    }
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.perf_counter()
