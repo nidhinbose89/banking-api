@@ -84,21 +84,41 @@ If forking this repo into your own AWS account:
 
 ### Step 4: First Deployment (manual, before CI/CD takes over)
 
-The first Docker image needs to be pushed manually so ECS has something to run.
+The first Docker image needs to be pushed manually so ECS has something to run. Run from the repository root.
 
+**Linux / macOS / WSL:**
 ```bash
-# From repo root
+ECR_URL=$(terraform -chdir=infra output -raw ecr_repository_url)
+
 aws ecr get-login-password --region ap-southeast-1 | \
-  docker login --username AWS --password-stdin $(terraform -chdir=infra output -raw ecr_repository_url)
+  docker login --username AWS --password-stdin $ECR_URL
 
 docker build -t banking-api:latest .
-docker tag banking-api:latest $(terraform -chdir=infra output -raw ecr_repository_url):latest
-docker push $(terraform -chdir=infra output -raw ecr_repository_url):latest
+docker tag banking-api:latest $ECR_URL:latest
+docker push $ECR_URL:latest
 
 aws ecs update-service \
   --cluster banking-api-cluster \
   --service banking-api-service \
   --force-new-deployment \
+  --region ap-southeast-1
+```
+
+**Windows PowerShell:**
+```powershell
+$ecrUrl = terraform -chdir=infra output -raw ecr_repository_url
+
+aws ecr get-login-password --region ap-southeast-1 | `
+  docker login --username AWS --password-stdin $ecrUrl
+
+docker build -t banking-api:latest .
+docker tag banking-api:latest "${ecrUrl}:latest"
+docker push "${ecrUrl}:latest"
+
+aws ecs update-service `
+  --cluster banking-api-cluster `
+  --service banking-api-service `
+  --force-new-deployment `
   --region ap-southeast-1
 ```
 
@@ -170,7 +190,19 @@ Tests are integration tests against a real Postgres (see Trade-offs).
 ```bash
 pip install -r requirements-test.txt
 docker compose up -d db
+```
+
+Then set the database URL and run pytest.
+
+**Linux / macOS / WSL:**
+```bash
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres pytest
+```
+
+**Windows PowerShell:**
+```powershell
+$env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/postgres"
+pytest
 ```
 
 In CI, GitHub Actions provides a throwaway Postgres service container.
