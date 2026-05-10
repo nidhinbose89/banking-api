@@ -106,13 +106,7 @@ Wait ~3 minutes for ECS to pull the image and start tasks.
 
 ### Step 5: Verify Deployment
 
-```bash
-curl -k $(terraform -chdir=infra output -raw alb_url)/health
-```
-
-Expected: `{"status":"ok"}`
-
-Or run the full smoke test (see Smoke Test section below).
+Run the smoke test to confirm the deployment works end-to-end. See the [Smoke Test](#smoke-test) section for the command and details.
 
 ### Step 6: Subsequent Deployments via CI/CD
 
