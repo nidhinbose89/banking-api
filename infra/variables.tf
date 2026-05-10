@@ -10,6 +10,12 @@ variable "project_name" {
   default     = "banking-api"
 }
 
+variable "github_repository" {
+  description = "GitHub repository in 'owner/name' format used by the OIDC trust policy. Override this when forking."
+  type        = string
+  default     = "nidhinbose89/banking-api"
+}
+
 variable "vpc_cidr" {
   description = "CIDR block for the VPC"
   type        = string

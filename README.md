@@ -48,6 +48,22 @@ Install on your local machine:
 ```
    Enter the access key, secret, region `ap-southeast-1`, and output format `json`.
 
+### Forking Note (skip if running from this repo directly)
+
+If you are forking this repository into your own AWS account, override the `github_repository` Terraform variable when running Step 2. Either:
+
+```bash
+terraform apply -var="github_repository=YOUR_USERNAME/YOUR_REPO_NAME"
+```
+
+or create `infra/terraform.tfvars` with:
+
+```
+github_repository = "YOUR_USERNAME/YOUR_REPO_NAME"
+```
+
+This rewrites the OpenID Connect trust policy to trust your fork instead of the original repository. No code edit needed.
+
 ### Step 1: Clone the Repository
 
 ```bash
@@ -77,10 +93,9 @@ GitHub Actions authenticates to AWS via OpenID Connect (OIDC), so no AWS keys ar
 
 The deploy workflow reads the IAM role ARN from a GitHub Actions variable (`AWS_DEPLOY_ROLE_ARN`), so the workflow file works for any AWS account without code changes.
 
-If forking this repo into your own AWS account:
+For forks, the trust policy was scoped to your repository via the `github_repository` variable in the Forking Note above. The remaining one-time setup is the GitHub Actions variable:
 
-1. Update the IAM role's trust policy in `infra/iam_github_actions.tf` to reference your fork (`repo:YOUR_USERNAME/YOUR_REPO:ref:refs/heads/main`), then re-apply Terraform.
-2. In your fork's GitHub repo: **Settings → Secrets and variables → Actions → Variables tab → New repository variable**. Name it `AWS_DEPLOY_ROLE_ARN`, value is the `github_actions_role_arn` output from `terraform apply`.
+In your fork's GitHub repo: **Settings → Secrets and variables → Actions → Variables tab → New repository variable**. Name it `AWS_DEPLOY_ROLE_ARN`, value is the `github_actions_role_arn` output from `terraform apply`.
 
 ### Step 4: First Deployment (manual, before CI/CD takes over)
 
@@ -107,9 +122,9 @@ aws ecs update-service \
 **Windows PowerShell:**
 ```powershell
 $ecrUrl = terraform -chdir=infra output -raw ecr_repository_url
+$ecrPassword = aws ecr get-login-password --region ap-southeast-1
 
-aws ecr get-login-password --region ap-southeast-1 | `
-  docker login --username AWS --password-stdin $ecrUrl
+$ecrPassword | docker login --username AWS --password-stdin $ecrUrl
 
 docker build -t banking-api:latest .
 docker tag banking-api:latest "${ecrUrl}:latest"
