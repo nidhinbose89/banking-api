@@ -48,6 +48,22 @@ Install on your local machine:
 ```
    Enter the access key, secret, region `ap-southeast-1`, and output format `json`.
 
+### Forking Note (skip if running from this repo directly)
+
+If you are forking this repository into your own AWS account, override the `github_repository` Terraform variable when running Step 2. Either:
+
+```bash
+terraform apply -var="github_repository=YOUR_USERNAME/YOUR_REPO_NAME"
+```
+
+or create `infra/terraform.tfvars` with:
+
+```
+github_repository = "YOUR_USERNAME/YOUR_REPO_NAME"
+```
+
+This rewrites the OpenID Connect trust policy to trust your fork instead of the original repository. No code edit needed.
+
 ### Step 1: Clone the Repository
 
 ```bash
@@ -77,28 +93,47 @@ GitHub Actions authenticates to AWS via OpenID Connect (OIDC), so no AWS keys ar
 
 The deploy workflow reads the IAM role ARN from a GitHub Actions variable (`AWS_DEPLOY_ROLE_ARN`), so the workflow file works for any AWS account without code changes.
 
-If forking this repo into your own AWS account:
+For forks, the trust policy was scoped to your repository via the `github_repository` variable in the Forking Note above. The remaining one-time setup is the GitHub Actions variable:
 
-1. Update the IAM role's trust policy in `infra/iam_github_actions.tf` to reference your fork (`repo:YOUR_USERNAME/YOUR_REPO:ref:refs/heads/main`), then re-apply Terraform.
-2. In your fork's GitHub repo: **Settings → Secrets and variables → Actions → Variables tab → New repository variable**. Name it `AWS_DEPLOY_ROLE_ARN`, value is the `github_actions_role_arn` output from `terraform apply`.
+In your fork's GitHub repo: **Settings → Secrets and variables → Actions → Variables tab → New repository variable**. Name it `AWS_DEPLOY_ROLE_ARN`, value is the `github_actions_role_arn` output from `terraform apply`.
 
 ### Step 4: First Deployment (manual, before CI/CD takes over)
 
-The first Docker image needs to be pushed manually so ECS has something to run.
+The first Docker image needs to be pushed manually so ECS has something to run. Run from the repository root.
 
+**Linux / macOS / WSL:**
 ```bash
-# From repo root
+ECR_URL=$(terraform -chdir=infra output -raw ecr_repository_url)
+
 aws ecr get-login-password --region ap-southeast-1 | \
-  docker login --username AWS --password-stdin $(terraform -chdir=infra output -raw ecr_repository_url)
+  docker login --username AWS --password-stdin $ECR_URL
 
 docker build -t banking-api:latest .
-docker tag banking-api:latest $(terraform -chdir=infra output -raw ecr_repository_url):latest
-docker push $(terraform -chdir=infra output -raw ecr_repository_url):latest
+docker tag banking-api:latest $ECR_URL:latest
+docker push $ECR_URL:latest
 
 aws ecs update-service \
   --cluster banking-api-cluster \
   --service banking-api-service \
   --force-new-deployment \
+  --region ap-southeast-1
+```
+
+**Windows PowerShell:**
+```powershell
+$ecrUrl = terraform -chdir=infra output -raw ecr_repository_url
+$ecrPassword = aws ecr get-login-password --region ap-southeast-1
+
+$ecrPassword | docker login --username AWS --password-stdin $ecrUrl
+
+docker build -t banking-api:latest .
+docker tag banking-api:latest "${ecrUrl}:latest"
+docker push "${ecrUrl}:latest"
+
+aws ecs update-service `
+  --cluster banking-api-cluster `
+  --service banking-api-service `
+  --force-new-deployment `
   --region ap-southeast-1
 ```
 
@@ -170,7 +205,19 @@ Tests are integration tests against a real Postgres (see Trade-offs).
 ```bash
 pip install -r requirements-test.txt
 docker compose up -d db
+```
+
+Then set the database URL and run pytest.
+
+**Linux / macOS / WSL:**
+```bash
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres pytest
+```
+
+**Windows PowerShell:**
+```powershell
+$env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/postgres"
+pytest
 ```
 
 In CI, GitHub Actions provides a throwaway Postgres service container.
