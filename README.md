@@ -1,77 +1,153 @@
 # Banking API
 
-A REST API for basic banking operations (account creation, balance enquiry, deposits, withdrawals) built as a take-home exercise. Deployed to AWS Singapore (ap-southeast-1) with full Infrastructure-as-Code and CI/CD.
+REST API for basic banking (accounts, balance, deposits, withdrawals) — take-home exercise with Terraform on AWS (`ap-southeast-1`) and GitHub Actions (OIDC, no long-lived AWS keys in GitHub).
+
+The **reference AWS environment for this repo is not running** (stack torn down). There is no public URL unless you deploy from `infra/`. Use [Local development](#local-development) to run the app on your machine, or follow the [Setup guide](#setup-guide) to provision your own account.
 
 ## Architecture
 
 ![Architecture](docs/architecture.png)
 
-## Tech Stack
+## Tech stack
 
-- **Application:** FastAPI (Python 3.11), SQLAlchemy, Alembic, psycopg2
-- **Database:** PostgreSQL 15 (Amazon RDS)
-- **Container:** Docker, Amazon ECR
-- **Compute:** Amazon ECS on Fargate
-- **Networking:** VPC with public/private subnets, Application Load Balancer, NAT Gateway
+- **App:** FastAPI (Python 3.11), SQLAlchemy, Alembic, psycopg2
+- **DB:** PostgreSQL 15 (RDS when deployed)
+- **Runtime:** Docker → ECR → ECS Fargate
+- **Network:** VPC (public/private subnets), ALB, NAT
 - **Secrets:** AWS Secrets Manager
-- **Monitoring:** CloudWatch (logs, dashboard, alarm)
-- **Infrastructure:** Terraform
-- **CI/CD:** GitHub Actions with OIDC (no long-lived AWS keys)
+- **Observability:** CloudWatch (logs, dashboard, alarm)
+- **IaC / CI:** Terraform, GitHub Actions
 
-## Live Endpoint
+## API endpoints
 
-https://banking-api-alb-1168095763.ap-southeast-1.elb.amazonaws.com
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/` | API metadata and links |
+| POST | `/accounts` | Create account |
+| GET | `/accounts/{id}/balance` | Current balance |
+| POST | `/accounts/{id}/deposit` | Deposit (`Idempotency-Key` required) |
+| POST | `/accounts/{id}/withdraw` | Withdraw (`Idempotency-Key` required) |
+| GET | `/health` | Liveness |
+| GET | `/version` | Build metadata |
 
-HTTPS uses a self-signed certificate (no domain). Use `curl -k` or browser override.
+OpenAPI: `/docs` on your host (e.g. `http://localhost:8000/docs` locally, or `https://<alb>/docs` after deploy). Deployed ALB uses a **self-signed** TLS cert — use `curl -k`, `curl.exe -k`, or skip cert verification in your client.
 
-## Setup Guide
+### Idempotency
 
-This is a step-by-step walkthrough from fresh clone to deployed application. Existing infrastructure is already deployed; these steps document how to recreate it from scratch.
+Deposits and withdrawals require `Idempotency-Key`. Same key + same body → same response. Same key + different body → `422`.
+
+## Local development
+
+Docker Compose:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+App: `http://localhost:8000` · Swagger: `http://localhost:8000/docs`
+
+Optional local toolchain (tests, diagrams):
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+## Running tests
+
+Integration tests against real Postgres (see [Trade-offs](#trade-offs-and-design-decisions)).
+
+```bash
+pip install -r requirements-test.txt
+docker compose up -d db
+```
+
+**Bash:**
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres pytest
+```
+
+**PowerShell:**
+
+```powershell
+$env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/postgres"
+pytest
+```
+
+CI uses a disposable Postgres service container.
+
+## Smoke test
+
+Scripts: `scripts/smoke_test.sh` (Bash + `curl`) and `scripts/smoke_test.ps1` (Windows PowerShell 5.1+). They hit **whatever base URL you pass**; do not rely on the baked-in default in source (it may point at an old host).
+
+**Bash**
+
+```bash
+chmod +x scripts/smoke_test.sh
+./scripts/smoke_test.sh "https://YOUR_ALB_HOST"
+```
+
+**PowerShell**
+
+```powershell
+.\scripts\smoke_test.ps1 "https://YOUR_ALB_HOST"
+```
+
+After Terraform apply, substitute `YOUR_ALB_HOST` from `alb_url` (no trailing slash), e.g.:
+
+```bash
+./scripts/smoke_test.sh "$(terraform -chdir=infra output -raw alb_url)"
+```
+
+```powershell
+$url = terraform -chdir=infra output -raw alb_url
+.\scripts\smoke_test.ps1 $url
+```
+
+`jq` improves JSON assertions in the shell script (`apt install jq`, `brew install jq`, …). Non-zero exit on any failed check.
+
+## Setup guide
+
+End-to-end: clone → Terraform → first image → ECS. Nothing exists in AWS until `terraform apply` in `infra/`.
 
 ### Prerequisites
 
-Install on your local machine:
+- [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+- [Terraform 1.6+](https://developer.hashicorp.com/terraform/install)
+- Docker
+- Python 3.11+
+- Git
 
-- **AWS CLI v2** — https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
-- **Terraform 1.6+** — https://developer.hashicorp.com/terraform/install
-- **Docker Desktop** (Windows/Mac) or Docker Engine (Linux)
-- **Python 3.11+**
-- **Git**
+### AWS account setup
 
-### AWS Account Setup
+1. AWS account and IAM identity with enough rights for first apply (see trade-offs for tightening later).
+2. `aws configure` — access key, secret, region `ap-southeast-1`, output `json`.
 
-1. Create or use an existing AWS account.
-2. Create an IAM user (or use an existing one) with **AdministratorAccess** for the initial Terraform apply. After deployment you can scope this down — see Trade-offs.
-3. Generate an access key for that user, then run:
-```bash
-   aws configure
-```
-   Enter the access key, secret, region `ap-southeast-1`, and output format `json`.
+### Forking (own GitHub repo + AWS)
 
-### Forking Note (skip if running from this repo directly)
-
-If you are forking this repository into your own AWS account, override the `github_repository` Terraform variable when running Step 2. Either:
+If the GitHub repo slug differs from the default in Terraform, set variable **`github_repository`** (`owner/name`) **before** the apply that creates the OIDC role, e.g.:
 
 ```bash
-terraform apply -var="github_repository=YOUR_USERNAME/YOUR_REPO_NAME"
+terraform apply -var="github_repository=YOUR_ORG/YOUR_REPO"
 ```
 
-or create `infra/terraform.tfvars` with:
+or `infra/terraform.tfvars`:
 
 ```
-github_repository = "YOUR_USERNAME/YOUR_REPO_NAME"
+github_repository = "YOUR_ORG/YOUR_REPO"
 ```
 
-This rewrites the OpenID Connect trust policy to trust your fork instead of the original repository. No code edit needed.
+Variable lives in `infra/variables.tf`; trust policy uses it in `infra/iam_github_actions.tf`.
 
-### Step 1: Clone the Repository
+### Step 1 — Clone
 
 ```bash
 git clone https://github.com/nidhinbose89/banking-api.git
 cd banking-api
 ```
 
-### Step 2: Deploy Infrastructure
+### Step 2 — Terraform
 
 ```bash
 cd infra
@@ -79,38 +155,29 @@ terraform init
 terraform apply
 ```
 
-Review the plan and type `yes` when prompted. Takes ~10 minutes (RDS is the slowest).
+Confirm the plan (`yes`). Budget ~10 minutes (RDS is slowest). Note outputs: `alb_url`, `ecr_repository_url`, `github_actions_role_arn`.
 
-When done, note the outputs:
+### Step 3 — GitHub Actions variable
 
-- `alb_url` — the live application endpoint
-- `ecr_repository_url` — where the Docker image will be pushed
-- `github_actions_role_arn` — for CI/CD setup (next step)
+Workflow assumes AWS with OIDC via repository variable **`AWS_DEPLOY_ROLE_ARN`**.
 
-### Step 3: Configure GitHub Actions for AWS
+GitHub → **Settings** → **Secrets and variables** → **Actions** → **Variables** → **New repository variable**: name `AWS_DEPLOY_ROLE_ARN`, value = `github_actions_role_arn` from Step 2.
 
-GitHub Actions authenticates to AWS via OpenID Connect (OIDC), so no AWS keys are stored as secrets. The Terraform apply already created the IAM role and trust policy.
+### Step 4 — First image (before CI pushes)
 
-The deploy workflow reads the IAM role ARN from a GitHub Actions variable (`AWS_DEPLOY_ROLE_ARN`), so the workflow file works for any AWS account without code changes.
+From repo root.
 
-For forks, the trust policy was scoped to your repository via the `github_repository` variable in the Forking Note above. The remaining one-time setup is the GitHub Actions variable:
+**Bash**
 
-In your fork's GitHub repo: **Settings → Secrets and variables → Actions → Variables tab → New repository variable**. Name it `AWS_DEPLOY_ROLE_ARN`, value is the `github_actions_role_arn` output from `terraform apply`.
-
-### Step 4: First Deployment (manual, before CI/CD takes over)
-
-The first Docker image needs to be pushed manually so ECS has something to run. Run from the repository root.
-
-**Linux / macOS / WSL:**
 ```bash
 ECR_URL=$(terraform -chdir=infra output -raw ecr_repository_url)
 
 aws ecr get-login-password --region ap-southeast-1 | \
-  docker login --username AWS --password-stdin $ECR_URL
+  docker login --username AWS --password-stdin "$ECR_URL"
 
 docker build -t banking-api:latest .
-docker tag banking-api:latest $ECR_URL:latest
-docker push $ECR_URL:latest
+docker tag banking-api:latest "${ECR_URL}:latest"
+docker push "${ECR_URL}:latest"
 
 aws ecs update-service \
   --cluster banking-api-cluster \
@@ -119,11 +186,11 @@ aws ecs update-service \
   --region ap-southeast-1
 ```
 
-**Windows PowerShell:**
+**PowerShell**
+
 ```powershell
 $ecrUrl = terraform -chdir=infra output -raw ecr_repository_url
 $ecrPassword = aws ecr get-login-password --region ap-southeast-1
-
 $ecrPassword | docker login --username AWS --password-stdin $ecrUrl
 
 docker build -t banking-api:latest .
@@ -137,197 +204,104 @@ aws ecs update-service `
   --region ap-southeast-1
 ```
 
-Wait ~3 minutes for ECS to pull the image and start tasks.
+Wait a few minutes for ECS to stabilize.
 
-### Step 5: Verify Deployment
+### Step 5 — Verify
 
-Run the smoke test to confirm the deployment works end-to-end. See the [Smoke Test](#smoke-test) section for the command and details.
+Use [Smoke test](#smoke-test) against `alb_url`.
 
-### Step 6: Subsequent Deployments via CI/CD
+### Step 6 — Ongoing deploys
 
-After Step 4, every push to the `main` branch automatically:
+Pushes to `main`: tests (with Postgres service) → build → push ECR (`<sha>` + `latest`) → ECS rolling update. PRs: tests only.
 
-1. Runs pytest in a Postgres service container
-2. Builds a new Docker image, tags with commit SHA + `latest`
-3. Pushes to ECR
-4. Forces ECS to deploy the new image
-5. Waits for the service to stabilize
+### Health check (optional)
 
-Pull requests run only the test job.
+**Bash**
 
-### Tearing Down
+```bash
+curl -k "$(terraform -chdir=infra output -raw alb_url)/health"
+```
+
+**PowerShell**
+
+```powershell
+$base = terraform -chdir=infra output -raw alb_url
+curl.exe -k "$base/health"
+```
+
+### Tear down
 
 ```bash
 cd infra
 terraform destroy
 ```
 
-This removes all AWS resources created by Terraform. ECR images and CloudWatch log retention are also deleted.
+Removes Terraform-managed resources (including ECR with `force_delete` where configured).
 
-## API Endpoints
+## Deployment (CI/CD)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/accounts` | Create a new account |
-| GET | `/accounts/{id}/balance` | Get current balance |
-| POST | `/accounts/{id}/deposit` | Deposit funds (requires `Idempotency-Key` header) |
-| POST | `/accounts/{id}/withdraw` | Withdraw funds (requires `Idempotency-Key` header) |
-| GET | `/health` | Liveness check |
-| GET | `/version` | Returns deployed commit SHA and build timestamp |
+Details in [Setup guide](#setup-guide). Short version:
 
-Full OpenAPI docs at `/docs` on the live URL.
+- **test** — `pytest` + Postgres (runs on PRs too).
+- **deploy** — OIDC to AWS, Docker build, tag SHA + `latest`, ECR push, `ecs update-service`, wait stable.
 
-### Idempotency
+Rollback: retag an older image as `latest` in ECR and redeploy.
 
-Deposit and withdraw require an `Idempotency-Key` header. Replaying the same key with the same body returns the original response. Replaying with a different body returns 422 (key reused with different payload). This prevents duplicate transactions on client retries.
+## Infrastructure (Terraform)
 
-## Local Development
-
-Requires Docker and Docker Compose.
-
-```bash
-cp .env.example .env
-docker compose up --build
-```
-
-App available at `http://localhost:8000`. Swagger UI at `http://localhost:8000/docs`.
-
-For a full local Python environment (runtime, tests, and diagram tooling):
-
-```bash
-pip install -r requirements-dev.txt
-```
-
-## Running Tests
-
-Tests are integration tests against a real Postgres (see Trade-offs).
-
-```bash
-pip install -r requirements-test.txt
-docker compose up -d db
-```
-
-Then set the database URL and run pytest.
-
-**Linux / macOS / WSL:**
-```bash
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres pytest
-```
-
-**Windows PowerShell:**
-```powershell
-$env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/postgres"
-pytest
-```
-
-In CI, GitHub Actions provides a throwaway Postgres service container.
-
-## Smoke Test
-
-After deployment, run the smoke test against the live API (uses `curl -k` / certificate skip for the self-signed ALB cert):
-
-```bash
-chmod +x scripts/smoke_test.sh
-./scripts/smoke_test.sh
-```
-
-Or on Windows (Windows PowerShell 5.1 or PowerShell 7+):
-
-```powershell
-.\scripts\smoke_test.ps1
-```
-
-Optional first argument is the API base URL; it defaults to the live ALB URL in the scripts.
-
-The Bash script uses `jq` if installed for JSON replay checks; install `jq` for the most reliable output (`apt install jq`, `brew install jq`, etc.). The PowerShell script uses `Invoke-WebRequest` (with certificate skip appropriate to the PowerShell version). The script exercises all endpoints, including idempotency edge cases. Exits non-zero on any failure.
-
-## Deployment
-
-Continuous deployment via GitHub Actions. Full setup steps in [Setup Guide](#setup-guide). Summary:
-
-- **Test job:** runs pytest against a Postgres service container (also on PRs).
-- **Deploy job:** assumes an AWS IAM role via OpenID Connect (no long-lived keys), builds the Docker image, tags with commit SHA and `latest`, pushes to ECR, forces ECS deployment, waits for service to stabilize.
-
-Image tagging: every image is pushed with the 7-character git commit SHA (e.g. `a3f9c21`) for traceability and `latest` for ECS task definition reference. Rollback is done by retagging an older SHA as `latest`.
-
-## Infrastructure
-
-All AWS resources are defined in `infra/` as Terraform. Resources include:
-
-- VPC with public and private subnets across 2 Availability Zones
-- Application Load Balancer (HTTPS:443 with self-signed cert, HTTP:80 redirects)
-- ECS cluster, task definition (0.25 vCPU, 512 MB), service (2 tasks)
-- RDS PostgreSQL 15 (db.t3.micro, single-AZ)
-- ECR repository with scan-on-push and lifecycle policy (keep last 10 images)
-- Secrets Manager for the database connection string
-- CloudWatch log group, dashboard, and 5xx error alarm
-- IAM OpenID Connect provider and role for GitHub Actions
-
-Setup commands are in the [Setup Guide](#setup-guide).
+Under `infra/`: VPC (2 AZs), public/private subnets, ALB (HTTPS self-signed, HTTP→HTTPS), ECS Fargate service, RDS Postgres 15, ECR (+ lifecycle), Secrets Manager, CloudWatch (logs, dashboard, 5xx alarm), GitHub OIDC provider + deploy role.
 
 ## Monitoring
 
-- **Logs:** CloudWatch log group `/ecs/banking-api`, streamed from all containers.
-- **Dashboard:** https://ap-southeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-southeast-1#dashboards:name=banking-api-dashboard (4 widgets: ALB request count, ALB 5xx errors, ECS CPU, ECS memory)
-- **Alarm:** `banking-api-alb-5xx-errors` triggers when 5xx target errors exceed 5 in 5 minutes.
+With the stack applied: logs in `/ecs/banking-api`; dashboard **`banking-api-dashboard`** in CloudWatch; alarm **`banking-api-alb-5xx-errors`** (5xx threshold over 5 minutes). Destroy removes them.
 
 ## Security
 
-### Network Isolation
-- VPC with public and private subnets across 2 Availability Zones.
-- ALB in public subnets, ECS tasks and RDS in private subnets.
-- NAT Gateway for outbound-only egress from private subnets.
-- Security groups enforce least-privilege flow:
-  - ALB accepts 443/80 from the internet only.
-  - ECS tasks accept 8000 from the ALB security group only.
-  - RDS accepts 5432 from the ECS security group only.
+Applies **while the stack exists** (not after destroy).
+
+### Network
+
+Private subnets for ECS and RDS; ALB public; NAT for egress. SGs: internet → ALB `:443`/`:80`; ALB → ECS `:8000`; ECS → RDS `:5432`.
 
 ### Encryption
-- **In transit:** HTTPS:443 at the ALB, HTTP:80 redirects to HTTPS. Self-signed certificate (no domain).
-- **At rest:** RDS storage encrypted (AWS-managed KMS key). Secrets Manager values encrypted by default.
 
-### Access Control
-- IAM roles follow least-privilege:
-  - ECS task execution role: pull from ECR, write to CloudWatch, read the specific DB secret only.
-  - ECS task role: minimal application-level permissions.
-  - GitHub Actions role: ECR push, ECS update-service, PassRole on the task execution role only.
-- GitHub Actions authenticates via OpenID Connect. No long-lived AWS access keys are stored as GitHub Secrets.
-- The OIDC trust policy is scoped to this specific repository and the `main` branch.
+TLS at ALB (self-signed demo cert). RDS and Secrets Manager encrypted at rest (defaults / AWS-managed keys).
 
-### Secrets Management
-- Database credentials are generated by Terraform and stored in AWS Secrets Manager.
-- ECS injects the connection string into the container at startup. Credentials never appear in source code, environment files, or CloudWatch logs.
+### IAM
 
-### Application-Level Safeguards
-- `Idempotency-Key` header on deposit and withdraw prevents duplicate transactions on client retries.
-- Pydantic schema validation rejects malformed input before reaching business logic.
-- `SELECT FOR UPDATE` row locking on balance reads prevents race conditions on concurrent withdrawals.
+Task execution: ECR pull, logs, read DB secret. Task role: app scope. GitHub role: ECR push, ECS service update, `PassRole` for execution role. OIDC in GitHub — no static AWS keys in repo secrets. Trust subject matches `github_repository` and `main` (see Terraform).
 
-## Trade-offs and Design Decisions
+### Secrets
 
-These are choices I'd revisit in a production environment with more time:
+DB URL from Terraform → Secrets Manager → injected into task. Not committed to git.
 
-- **Self-signed TLS certificate.** No domain was registered for this exercise. Production would use AWS Certificate Manager with a real domain.
-- **Integration tests only.** The current tests hit a real Postgres database. In production I would split into unit tests (mocked dependencies, run on every commit) and integration tests (real DB, run in CI). Skipped for time.
-- **Shared `DATABASE_URL` for app and tests.** Both read the same environment variable. The test fixture explicitly switches to a `banking_test` database to avoid touching production data, but a separate `TEST_DATABASE_URL` would make this safer.
-- **Single environment.** No staging/production split. A real setup would have separate AWS accounts or at least separate Terraform workspaces with promotion between them.
-- **Smoke test writes to the live database.** Each run creates a real account and transactions in production RDS. Production would use a dedicated synthetic test account, run smoke tests against staging only, or auto-clean up after each run.
-- **No application performance monitoring.** CloudWatch covers infrastructure metrics. AWS X-Ray or DataDog would give per-request tracing.
-- **No image vulnerability scanning beyond ECR scan-on-push.** Adding Trivy or Snyk in the CI pipeline would catch issues before push.
-- **No deploy approval gate.** Pushes to main deploy automatically. Production would gate behind GitHub Environments approval or a manual promotion step.
-- **`db.t3.micro` and 0.25 vCPU Fargate.** Smallest valid sizes, suitable for demo. Production sizing would come from load testing.
+### Application
 
-## Repository Layout
+Idempotency keys; Pydantic validation; `SELECT FOR UPDATE` on balance path for concurrent withdrawals.
+
+## Trade-offs and design decisions
+
+- Self-signed ALB cert — production would use ACM + real DNS.
+- Heavy integration tests against Postgres — would split unit vs integration in production.
+- Same `DATABASE_URL` pattern for app/tests locally — tests use a separate DB name where configured; `TEST_DATABASE_URL` would be clearer.
+- Single env — no staged promotion story.
+- Smoke tests against a real DB when aimed at cloud — use staging or cleanup in production.
+- No APM beyond CloudWatch — would add tracing in production.
+- ECR scan only — would add Trivy/Snyk in CI for stronger gates.
+- Direct deploy from `main` — would add approvals / environments.
+- Small RDS + Fargate SKU — demo sizing only.
+
+## Repository layout
 
 ```
 .
-├── app/                    # FastAPI application
-├── alembic/                # Database migrations
-├── tests/                  # Integration tests
-├── infra/                  # Terraform IaC
-├── docs/                   # Architecture diagram (source + PNG)
-├── .github/workflows/      # CI/CD pipeline
-├── scripts/                # Smoke tests (bash + PowerShell)
+├── app/
+├── alembic/
+├── tests/
+├── infra/
+├── docs/
+├── .github/workflows/
+├── scripts/
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
