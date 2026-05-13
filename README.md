@@ -1,6 +1,6 @@
 # Banking API
 
-A REST API for basic banking operations (account creation, balance enquiry, deposits, withdrawals) built as a take-home exercise. Deployed to AWS Singapore (ap-southeast-1) with full Infrastructure-as-Code and CI/CD.
+A REST API for basic banking operations (account creation, balance enquiry, deposits, withdrawals) built as a take-home exercise. The project includes Terraform and GitHub Actions CI/CD for deploying to AWS Singapore (ap-southeast-1). **The author’s AWS demo stack has been destroyed** (`terraform destroy`); there is no hosted public URL until you provision your own account with the [Setup Guide](#setup-guide).
 
 ## Architecture
 
@@ -20,13 +20,28 @@ A REST API for basic banking operations (account creation, balance enquiry, depo
 
 ## Live Endpoint
 
-https://banking-api-alb-1168095763.ap-southeast-1.elb.amazonaws.com
+There is **no** public demo URL right now: the previous ALB endpoint was removed when the infrastructure was torn down.
 
-HTTPS uses a self-signed certificate (no domain). Use `curl -k` or browser override.
+After you deploy again with Terraform, use the `alb_url` output as the API base. Quick health check:
+
+**Linux / macOS / WSL (Bash):**
+```bash
+curl -k "$(terraform -chdir=infra output -raw alb_url)/health"
+```
+
+**Windows PowerShell:**
+```powershell
+$base = terraform -chdir=infra output -raw alb_url
+curl.exe -k "$base/health"
+```
+
+For day-to-day work, run the app locally (see [Local Development](#local-development)).
+
+HTTPS on the ALB uses a self-signed certificate (no domain). Use `curl -k` / `curl.exe -k` or a browser certificate override when calling the deployed URL.
 
 ## Setup Guide
 
-This is a step-by-step walkthrough from fresh clone to deployed application. Existing infrastructure is already deployed; these steps document how to recreate it from scratch.
+This is a step-by-step walkthrough from a fresh clone to a deployed application in **your** AWS account. The Terraform in `infra/` defines the full stack; nothing is running in AWS until you `terraform apply`.
 
 ### Prerequisites
 
@@ -175,7 +190,7 @@ This removes all AWS resources created by Terraform. ECR images and CloudWatch l
 | GET | `/health` | Liveness check |
 | GET | `/version` | Returns deployed commit SHA and build timestamp |
 
-Full OpenAPI docs at `/docs` on the live URL.
+Full OpenAPI docs are at `/docs` on whatever base URL you deploy (from `alb_url` after apply, or `http://localhost:8000/docs` locally).
 
 ### Idempotency
 
@@ -224,7 +239,7 @@ In CI, GitHub Actions provides a throwaway Postgres service container.
 
 ## Smoke Test
 
-After deployment, run the smoke test against the live API (uses `curl -k` / certificate skip for the self-signed ALB cert):
+After you deploy to AWS, run the smoke test against your ALB URL (uses `curl -k` / certificate skip for the self-signed ALB cert):
 
 ```bash
 chmod +x scripts/smoke_test.sh
@@ -237,7 +252,7 @@ Or on Windows (Windows PowerShell 5.1 or PowerShell 7+):
 .\scripts\smoke_test.ps1
 ```
 
-Optional first argument is the API base URL; it defaults to the live ALB URL in the scripts.
+Pass your base URL as the first script argument. After deploy, resolve it from Terraform: **Bash** — `./scripts/smoke_test.sh "$(terraform -chdir=infra output -raw alb_url)"`. **PowerShell** — `$url = terraform -chdir=infra output -raw alb_url; .\scripts\smoke_test.ps1 $url`. The scripts still ship a historical default URL in source; **override it** so you are not calling a dead endpoint.
 
 The Bash script uses `jq` if installed for JSON replay checks; install `jq` for the most reliable output (`apt install jq`, `brew install jq`, etc.). The PowerShell script uses `Invoke-WebRequest` (with certificate skip appropriate to the PowerShell version). The script exercises all endpoints, including idempotency edge cases. Exits non-zero on any failure.
 
@@ -267,11 +282,17 @@ Setup commands are in the [Setup Guide](#setup-guide).
 
 ## Monitoring
 
+When the stack exists in your account:
+
 - **Logs:** CloudWatch log group `/ecs/banking-api`, streamed from all containers.
-- **Dashboard:** https://ap-southeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-southeast-1#dashboards:name=banking-api-dashboard (4 widgets: ALB request count, ALB 5xx errors, ECS CPU, ECS memory)
+- **Dashboard:** In the AWS console, open CloudWatch → Dashboards and select `banking-api-dashboard` (widgets: ALB request count, ALB 5xx errors, ECS CPU, ECS memory). The exact console URL depends on your account and region.
 - **Alarm:** `banking-api-alb-5xx-errors` triggers when 5xx target errors exceed 5 in 5 minutes.
 
+`terraform destroy` removes these resources along with the rest of the stack.
+
 ## Security
+
+The following describes the architecture **when the Terraform stack is applied**; after `terraform destroy`, these AWS controls no longer exist.
 
 ### Network Isolation
 - VPC with public and private subnets across 2 Availability Zones.
@@ -311,7 +332,7 @@ These are choices I'd revisit in a production environment with more time:
 - **Integration tests only.** The current tests hit a real Postgres database. In production I would split into unit tests (mocked dependencies, run on every commit) and integration tests (real DB, run in CI). Skipped for time.
 - **Shared `DATABASE_URL` for app and tests.** Both read the same environment variable. The test fixture explicitly switches to a `banking_test` database to avoid touching production data, but a separate `TEST_DATABASE_URL` would make this safer.
 - **Single environment.** No staging/production split. A real setup would have separate AWS accounts or at least separate Terraform workspaces with promotion between them.
-- **Smoke test writes to the live database.** Each run creates a real account and transactions in production RDS. Production would use a dedicated synthetic test account, run smoke tests against staging only, or auto-clean up after each run.
+- **Smoke test writes to the deployed database.** Each run against a cloud URL creates a real account and transactions in that environment’s RDS. Production would use a dedicated synthetic test account, run smoke tests against staging only, or auto-clean up after each run.
 - **No application performance monitoring.** CloudWatch covers infrastructure metrics. AWS X-Ray or DataDog would give per-request tracing.
 - **No image vulnerability scanning beyond ECR scan-on-push.** Adding Trivy or Snyk in the CI pipeline would catch issues before push.
 - **No deploy approval gate.** Pushes to main deploy automatically. Production would gate behind GitHub Environments approval or a manual promotion step.
